@@ -1,0 +1,45 @@
+name: supabase-keepalive
+
+# Pings the Cloudflare worker daily. The worker runs a real SELECT on Supabase,
+# which counts as "user database activity" and prevents the Free-plan project
+# from auto-pausing after 7 days.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"    # 06:17 UTC daily — worker ping
+    - cron: "23 5 1 * *"    # 05:23 UTC on the 1st — repo bump (keeps Actions from
+                            # auto-disabling after 60 days of repo inactivity)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    if: github.event.schedule != '23 5 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping profitline-api
+        run: |
+          curl -fsS --retry 3 --retry-delay 10 \
+            "https://profitline-api.omonoff-15062003.workers.dev/api/summary" \
+            -o /dev/null -w "profitline HTTP %{http_code}\n"
+      - name: Ping truckline-api
+        run: |
+          curl -fsS --retry 3 --retry-delay 10 \
+            "https://truckline-api.omonoff-15062003.workers.dev/" \
+            -o /dev/null -w "truckline HTTP %{http_code}\n" || true
+
+  bump:
+    if: github.event.schedule == '23 5 1 * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump keepalive timestamp
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git config user.name  "keepalive-bot"
+          git config user.email "keepalive-bot@users.noreply.github.com"
+          git add .keepalive
+          git commit -m "chore: keepalive $(date -u +%Y-%m)" || exit 0
+          git push
